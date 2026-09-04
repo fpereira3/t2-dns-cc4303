@@ -30,9 +30,15 @@ def parse_dns_message(dnslib_reply):
         "authority": authority_section_list,
         "additional": additional_records,
     }
-    
+
     return message
 
+def print_parsed_msg(msg):
+    print("MENSAJE DNS:")
+    print("============================================================")
+    for (key, value) in msg.items():
+        print("{}: {}".format(key, value))
+    print("============================================================\n")
 
 def recv_dns_msg(address, port):
     sv_address = (address, port)
@@ -43,7 +49,8 @@ def recv_dns_msg(address, port):
     try:
         while True:
             data, client_address = sock.recvfrom(buf_size)
-            print(data)
+            parsed_msg = parse_dns_message(data)
+            print_parsed_msg(parsed_msg)
     finally:
         sock.close()
 
