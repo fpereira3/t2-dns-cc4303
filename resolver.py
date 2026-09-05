@@ -14,6 +14,23 @@ cache = {}
 
 
 def parse_dns_message(dnslib_reply):
+    """
+    Parsea un mensaje DNS en bytes crudos y lo transforma en una estructura
+    de datos manejable (un diccionario).
+
+    Args:
+        dnslib_reply (bytes): Mensaje DNS recibido, en bytes crudos, sin procesar.
+
+    Returns:
+        dict: Diccionario con las siguientes claves:
+            - "qname" (DNSLabel): Nombre de dominio consultado.
+            - "ancount" (int): Cantidad de elementos en la sección Answer.
+            - "nscount" (int): Cantidad de elementos en la sección Authority.
+            - "arcount" (int): Cantidad de elementos en la sección Additional.
+            - "answer" (list[RR]): Lista de Resource Records de la sección Answer.
+            - "authority" (list[RR]): Lista de Resource Records de la sección Authority.
+            - "additional" (list[RR]): Lista de Resource Records de la sección Additional.
+    """
     dnslib_reply = DNSRecord.parse(dnslib_reply)
 
     number_of_answer_elements = dnslib_reply.header.a
@@ -41,6 +58,16 @@ def parse_dns_message(dnslib_reply):
     return message
 
 def print_parsed_msg(msg):
+    """
+    Imprime en pantalla, de forma legible, la estructura de datos generada
+    por parse_dns_message().
+
+    Args:
+        msg (dict): Diccionario retornado por parse_dns_message().
+
+    Returns:
+        None
+    """
     print("DNS MESSAGE:")
     print("============================================================")
     for (key, value) in msg.items():
@@ -48,20 +75,67 @@ def print_parsed_msg(msg):
     print("============================================================\n")
 
 def print_debug(domain_name, name_server, ip_addr):
+    """
+    Imprime una línea de depuración indicando qué dominio se está consultando,
+    a qué Name Server, y a qué dirección IP. Solo imprime si debug_mode es True.
+
+    Args:
+        domain_name (str): Nombre de dominio que se está consultando.
+        name_server (str): Nombre del Name Server al que se le está preguntando.
+        ip_addr (str): Dirección IP a la que se envía la consulta.
+
+    Returns:
+        None
+    """
     if debug_mode:
         print("(debug) Consultando '{}' a '{}' con dirección IP '{}'".format(domain_name, name_server, ip_addr))
 
 def print_debug_cache(domain_name):
+    """
+    Imprime una línea de depuración indicando que la respuesta para un dominio
+    fue obtenida directamente desde el caché, sin consultar Name Servers.
+    Solo imprime si debug_mode es True.
+
+    Args:
+        domain_name (str): Nombre de dominio que fue encontrado en el caché.
+
+    Returns:
+        None
+    """
     if debug_mode:
         print("(debug) '{}' encontrado en caché, respondiendo directamente sin consultar Name Servers".format(domain_name))
 
 def update_history(domain_name):
+    """
+    Agrega el dominio consultado al historial de las últimas 20 consultas
+    recibidas, y calcula los 3 dominios más repetidos dentro de ese historial.
+
+    Args:
+        domain_name (str): Nombre de dominio de la consulta actual.
+
+    Returns:
+        list[str]: Lista con los 3 dominios más repetidos en las últimas
+            20 consultas recibidas, ordenados de mayor a menor frecuencia.
+    """
     query_history.append(domain_name)
     counts = Counter(query_history)
     top_3 = [domain for domain, _ in counts.most_common(3)]
     return top_3
 
 def build_cached_response(query_message_bytes, answer_records):
+    """
+    Construye una respuesta DNS válida a partir de una consulta actual y
+    una lista de Resource Records previamente guardados en el caché.
+
+    Args:
+        query_message_bytes (bytes): Mensaje de consulta original del cliente,
+            en bytes crudos (se usa para reutilizar su ID y su Question).
+        answer_records (list[RR]): Lista de Resource Records de tipo Answer
+            almacenados en el caché para el dominio consultado.
+
+    Returns:
+        bytes: Mensaje de respuesta DNS, en bytes, listo para enviar al cliente.
+    """
     parsed_query = DNSRecord.parse(query_message_bytes)
     reply = parsed_query.reply()
     for rr in answer_records:
@@ -69,6 +143,20 @@ def build_cached_response(query_message_bytes, answer_records):
     return reply.pack()
 
 def recv_dns_msg(address, port):
+    """
+    Crea un socket UDP asociado a (address, port) y escucha en un loop
+    infinito las consultas DNS entrantes. Por cada consulta recibida:
+    revisa si el dominio está en caché (y responde directamente en ese caso),
+    o bien la resuelve mediante resolver() y guarda el resultado en caché
+    si corresponde. Finalmente envía la respuesta al cliente.
+
+    Args:
+        address (str): Dirección IP a la cual asociar (bind) el socket.
+        port (int): Puerto a escuchar.
+
+    Returns:
+        None
+    """
     server_address = (address, port)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
@@ -89,10 +177,12 @@ def recv_dns_msg(address, port):
             else:
                 response = resolver(data)
 
+                # Solo guardamos en caché si el dominio quedó dentro del top 3 más repetido
                 if response is not None and domain_name in top_3:
                     parsed_response = DNSRecord.parse(response)
                     cache[domain_name] = parsed_response.rr
 
+            # Eliminamos del caché los dominios que ya no están en el top 3 actual
             for cached_domain in list(cache.keys()):
                 if cached_domain not in top_3:
                     del cache[cached_domain]
@@ -101,8 +191,20 @@ def recv_dns_msg(address, port):
                 sock.sendto(response, client_address)
     finally:
         sock.close()
- 
+
 def send_query(query_message_bytes, ip_addr, port=53):
+    """
+    Envía un mensaje de consulta DNS a una dirección IP y puerto determinados,
+    y espera su respuesta mediante un socket UDP.
+
+    Args:
+        query_message_bytes (bytes): Mensaje de consulta DNS en bytes crudos.
+        ip_addr (str): Dirección IP del servidor DNS al que se envía la consulta.
+        port (int, optional): Puerto del servidor DNS. Por defecto 53.
+
+    Returns:
+        bytes: Mensaje de respuesta recibido, en bytes crudos.
+    """
     server_address = (ip_addr, port)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -114,6 +216,27 @@ def send_query(query_message_bytes, ip_addr, port=53):
 
 
 def resolver(mensaje_consulta, ip_addr=root_ip, nombre_ns="."):
+    """
+    Resuelve recursivamente una consulta DNS de tipo A, comenzando desde el
+    servidor indicado por ip_addr (por defecto, el servidor raíz). Sigue la
+    cadena de delegaciones (Name Servers) hasta encontrar una respuesta con
+    un registro de tipo A, o hasta que no sea posible continuar.
+
+    Args:
+        mensaje_consulta (bytes): Mensaje de consulta DNS en bytes, obtenido
+            desde el cliente.
+        ip_addr (str, optional): Dirección IP a la cual enviar la consulta.
+            Por defecto, la IP del servidor raíz (root_ip).
+        nombre_ns (str, optional): Nombre del Name Server al que se le está
+            preguntando en el nivel actual de la recursión, usado solo para
+            el modo debug. Por defecto "." (la raíz).
+
+    Returns:
+        bytes | None: Mensaje de respuesta DNS en bytes si se encontró una
+            respuesta de tipo A; None si la consulta no pudo resolverse o
+            si se recibió un tipo de respuesta no contemplado.
+    """
+    # Usamos parse_dns_message para obtener el dominio consultado, y así armar el mensaje de debug
     parsed_query = parse_dns_message(mensaje_consulta)
     domain_name = str(parsed_query["qname"])
 
@@ -154,17 +277,17 @@ def resolver(mensaje_consulta, ip_addr=root_ip, nombre_ns="."):
             else:
                 ns_query = DNSRecord.question(next_name_server)
                 ns_response = resolver(ns_query.pack(), root_ip, ".")
- 
+
                 if ns_response is None:
                     return None
- 
+
                 ns_parsed_reply = DNSRecord.parse(ns_response)
                 ns_ip = None
                 for rr in ns_parsed_reply.rr:
                     if QTYPE.get(rr.rtype) == 'A':
                         ns_ip = str(rr.rdata)
                         break
- 
+
                 if ns_ip is not None:
                     return resolver(mensaje_consulta, ns_ip, next_name_server)
                 else:
