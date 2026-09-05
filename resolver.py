@@ -6,6 +6,7 @@ IP_VM = "127.0.0.1"
 
 buf_size = 4096
 root_ip = "198.41.0.4"
+debug_mode = True
 
 def parse_dns_message(dnslib_reply):
     dnslib_reply = DNSRecord.parse(dnslib_reply)
@@ -41,6 +42,10 @@ def print_parsed_msg(msg):
         print("{}: {}".format(key, value))
     print("============================================================\n")
 
+def print_debug(domain_name, nombre_ns, ip_addr):
+    if debug_mode:
+        print("(debug) Consultando '{}' a '{}' con dirección IP '{}'".format(domain_name, nombre_ns, ip_addr))
+
 def recv_dns_msg(address, port):
     sv_address = (address, port)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -70,7 +75,12 @@ def send_query(msg_consulta_b, ip_addr, port=53):
     return data
 
 
-def resolver(mensaje_consulta, ip_addr=root_ip):
+def resolver(mensaje_consulta, ip_addr=root_ip, nombre_ns="."):
+    parsed_consulta = parse_dns_message(mensaje_consulta)
+    domain_name = str(parsed_consulta["qname"])
+
+    print_debug(domain_name, nombre_ns, ip_addr)
+
     data = send_query(mensaje_consulta, ip_addr)
     dnslib_reply = DNSRecord.parse(data)
 
@@ -89,6 +99,9 @@ def resolver(mensaje_consulta, ip_addr=root_ip):
         hay_ns_en_authority = any(QTYPE.get(rr.rtype) == 'NS' for rr in authority_section_list)
 
         if hay_ns_en_authority:
+            primer_ns = authority_section_list[0]
+            nombre_ns_siguiente = str(primer_ns.rdata)
+
             additional_records = dnslib_reply.ar
             ip_en_additional = None
             for additional_record in additional_records:
@@ -98,13 +111,11 @@ def resolver(mensaje_consulta, ip_addr=root_ip):
                     break
 
             if ip_en_additional is not None:
-                return resolver(mensaje_consulta, ip_en_additional)
+                return resolver(mensaje_consulta, ip_en_additional, nombre_ns_siguiente)
 
             else:
-                primer_ns = authority_section_list[0]
-                nombre_ns = str(primer_ns.rdata)
-                query_ns = DNSRecord.question(nombre_ns)
-                respuesta_ns = resolver(query_ns.pack(), root_ip)
+                query_ns = DNSRecord.question(nombre_ns_siguiente)
+                respuesta_ns = resolver(query_ns.pack(), root_ip, ".")
  
                 if respuesta_ns is None:
                     return None
@@ -117,11 +128,10 @@ def resolver(mensaje_consulta, ip_addr=root_ip):
                         break
  
                 if ip_ns is not None:
-                    return resolver(mensaje_consulta, ip_ns)
+                    return resolver(mensaje_consulta, ip_ns, nombre_ns_siguiente)
                 else:
                     return None
 
     return None
 
 recv_dns_msg(IP_VM, 8000)
-
